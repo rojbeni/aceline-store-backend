@@ -1,0 +1,50 @@
+# Dependencies
+/node_modules
+.pnpm-store/
+.yalc/
+yalc.lock
+
+# Medusa build output
+.medusa
+.cache/
+
+# TypeScript build output
+dist/
+*.tsbuildinfo
+
+# Vite
+.vite/
+
+# Environment variables
+.env
+.env.*
+!.env.template
+
+# Uploads (local file storage fallback)
+/static/*
+!/static/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+integration-tests/**/.medusa/
+
+# Editor / IDE
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.pem
+*.tsbuildinfo
