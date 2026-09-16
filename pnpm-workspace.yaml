@@ -1,6 +1,6 @@
-onlyBuiltDependencies:
-  - '@medusajs/telemetry'
-  - '@swc/core'
-  - esbuild
-  - msgpackr-extract
-  - protobufjs
+allowBuilds:
+  '@medusajs/telemetry': true
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
