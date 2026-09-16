@@ -1,6 +1,6 @@
 allowBuilds:
-  '@medusajs/telemetry': false
-  '@swc/core': false
-  esbuild: false
-  msgpackr-extract: false
-  protobufjs: false
+  '@medusajs/telemetry': true
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
