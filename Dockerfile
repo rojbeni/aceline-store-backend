@@ -25,7 +25,7 @@ RUN pnpm build
 # production dependencies there so the runner image doesn't ship devDependencies.
 # --ignore-workspace keeps this install isolated from the root pnpm-workspace.yaml.
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    cd .medusa/server && pnpm install --prod
+    cd .medusa/server && pnpm install --prod --ignore-workspace
 
 # --- STAGE 2: Runner ---
 FROM node:20-alpine AS runner
