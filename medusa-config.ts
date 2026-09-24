@@ -75,7 +75,6 @@ module.exports = defineConfig({
       resolve: "@medusajs/medusa/payment",
       options: {
         providers: [
-          // ...your other providers (e.g. system/manual)
           {
             resolve: "./src/modules/konnect",
             id: "konnect",
@@ -96,7 +95,18 @@ module.exports = defineConfig({
         ],
       },
     },
-
+    {
+      resolve: "./src/modules/storefront",
+      options: {
+        url: process.env.STOREFRONT_URL,
+      },
+    },
+    {
+      resolve: "./src/modules/facebook",
+      options: {
+        pageAccessToken: process.env.FB_PAGE_ACCESS_TOKEN,
+      },
+    },
   ],
   featureFlags: { translation: true, },
   plugins: [

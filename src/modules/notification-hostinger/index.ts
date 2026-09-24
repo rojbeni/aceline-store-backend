@@ -1,6 +1,6 @@
-import { ModuleProviderExports } from "@medusajs/framework/types"
+import { ModuleProvider, Modules } from "@medusajs/framework/utils"
 import { HostingerNotificationService } from "./service"
 
-export default {
-    services: [HostingerNotificationService],
-} as ModuleProviderExports
+export default ModuleProvider(Modules.NOTIFICATION, {
+  services: [HostingerNotificationService],
+})

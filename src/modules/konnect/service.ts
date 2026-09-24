@@ -1,169 +1,156 @@
+import { AbstractPaymentProvider, MathBN, MedusaError } from "@medusajs/framework/utils"
 import {
-  AbstractPaymentProvider,
-  MedusaError,
-} from "@medusajs/framework/utils"
-import {
-  Logger,
-  InitiatePaymentInput,
-  InitiatePaymentOutput,
   AuthorizePaymentInput,
   AuthorizePaymentOutput,
-  CapturePaymentInput,
-  CapturePaymentOutput,
+  BigNumberInput,
   CancelPaymentInput,
   CancelPaymentOutput,
+  CapturePaymentInput,
+  CapturePaymentOutput,
   DeletePaymentInput,
   DeletePaymentOutput,
   GetPaymentStatusInput,
   GetPaymentStatusOutput,
+  InitiatePaymentInput,
+  InitiatePaymentOutput,
+  Logger,
+  PaymentSessionStatus,
+  ProviderWebhookPayload,
   RefundPaymentInput,
   RefundPaymentOutput,
   RetrievePaymentInput,
   RetrievePaymentOutput,
   UpdatePaymentInput,
   UpdatePaymentOutput,
-  ProviderWebhookPayload,
   WebhookActionResult,
 } from "@medusajs/framework/types"
-
-type KonnectOptions = {
-  apiKey: string // format: "<walletId>:<apiKey>" from your Konnect dashboard
-  receiverWalletId: string
-  baseUrl?: string // defaults to sandbox; override for production
-  webhookUrl: string // publicly reachable URL to this backend's webhook route
-  successUrl?: string
-  failUrl?: string
-}
+import { KonnectClient } from "./client"
+import {
+  ACCEPTED_PAYMENT_METHODS,
+  FALLBACK_FIRST_NAME,
+  FALLBACK_PHONE_NUMBER,
+  KONNECT_SANDBOX_URL,
+  PAYMENT_LINK_LIFESPAN_MINUTES,
+  TND_TO_MILLIMES,
+} from "./constants"
+import { KonnectOptions, KonnectPaymentStatus } from "./types"
 
 type InjectedDependencies = {
   logger: Logger
 }
 
-// Konnect amounts are in millimes (1 TND = 1000 millimes)
-const TND_TO_MILLIMES = 1000
+const REQUIRED_OPTIONS = ["apiKey", "receiverWalletId", "webhookUrl"] as const
+
+const SESSION_STATUS_BY_KONNECT_STATUS: Record<KonnectPaymentStatus, PaymentSessionStatus> = {
+  completed: "captured",
+  pending: "pending",
+  failed: "error",
+}
+
+const toMillimes = (amount: BigNumberInput): number =>
+  Math.round(MathBN.convert(amount).toNumber() * TND_TO_MILLIMES)
+
+const fromMillimes = (millimes: number): number => millimes / TND_TO_MILLIMES
+
+const toKonnectStatus = (status: string | undefined): KonnectPaymentStatus => {
+  if (status === "completed" || status === "pending") {
+    return status
+  }
+  return "failed"
+}
+
+const getPaymentRef = (data: Record<string, unknown> | undefined): string => {
+  const paymentRef = data?.payment_ref
+  if (typeof paymentRef !== "string") {
+    throw new MedusaError(MedusaError.Types.INVALID_DATA, "Konnect payment_ref is missing")
+  }
+  return paymentRef
+}
+
+const getWebhookPaymentRef = ({ data, rawData }: ProviderWebhookPayload["payload"]): string | null => {
+  if (typeof data?.payment_ref === "string") {
+    return data.payment_ref
+  }
+  return rawData ? new URLSearchParams(rawData.toString()).get("payment_ref") : null
+}
 
 class KonnectPaymentProviderService extends AbstractPaymentProvider<KonnectOptions> {
   static identifier = "konnect"
 
   protected logger_: Logger
   protected options_: KonnectOptions
+  protected client_: KonnectClient
+
+  static validateOptions(options: Record<string, unknown>) {
+    for (const key of REQUIRED_OPTIONS) {
+      if (!options[key]) {
+        throw new MedusaError(MedusaError.Types.INVALID_DATA, `Konnect: option "${key}" is required`)
+      }
+    }
+  }
 
   constructor(container: InjectedDependencies, options: KonnectOptions) {
-    // @ts-ignore - required by AbstractPaymentProvider constructor signature
-    super(...arguments)
+    super(container, options)
     this.logger_ = container.logger
     this.options_ = options
-  }
-
-  private get baseUrl() {
-    return this.options_.baseUrl || "https://api.sandbox.konnect.network/api/v2"
-  }
-
-  private toMillimes(amount: number): number {
-    return Math.round(amount * TND_TO_MILLIMES)
+    this.client_ = new KonnectClient(options.apiKey, options.baseUrl || KONNECT_SANDBOX_URL)
   }
 
   // Called when a payment session is first created at checkout
-  async initiatePayment(
-    input: InitiatePaymentInput
-  ): Promise<InitiatePaymentOutput> {
-    const { amount, currency_code, data, context } = input
+  async initiatePayment({ amount, currency_code, data, context }: InitiatePaymentInput): Promise<InitiatePaymentOutput> {
     const customer = context?.customer
-    console.log("Konnect initiatePayment input:",
-      this.options_.apiKey)
-    try {
-      const response = await fetch(`${this.baseUrl}/payments/init-payment`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": this.options_.apiKey,
-        },
-        body: JSON.stringify({
-          receiverWalletId: this.options_.receiverWalletId,
-          token: currency_code.toUpperCase(), // "TND"
-          amount: this.toMillimes(amount as number),
-          type: "immediate",
-          description: `Order payment`,
-          acceptedPaymentMethods: ["wallet", "bank_card", "e-DINAR"],
-          lifespan: 10, // minutes before the payment link expires
-          checkoutForm: true,
-          firstName: customer?.first_name || "Customer",
-          lastName: customer?.last_name || "",
-          phoneNumber: customer?.phone || "00000000",
-          email: customer?.email,
-          orderId: (data?.resource_id as string) || undefined,
-          webhook: this.options_.webhookUrl,
-          successUrl: this.options_.successUrl,
-          failUrl: this.options_.failUrl,
-        }),
-      })
 
-      if (!response.ok) {
-        const errBody = await response.text()
-        throw new MedusaError(
-          MedusaError.Types.UNEXPECTED_STATE,
-          `Failed to initiate Konnect payment: ${errBody}`
-        )
-      }
+    const payment = await this.client_.initPayment({
+      receiverWalletId: this.options_.receiverWalletId,
+      token: currency_code.toUpperCase(),
+      amount: toMillimes(amount),
+      type: "immediate",
+      description: "Order payment",
+      acceptedPaymentMethods: ACCEPTED_PAYMENT_METHODS,
+      lifespan: PAYMENT_LINK_LIFESPAN_MINUTES,
+      checkoutForm: true,
+      firstName: customer?.first_name || FALLBACK_FIRST_NAME,
+      lastName: customer?.last_name || "",
+      phoneNumber: customer?.phone || FALLBACK_PHONE_NUMBER,
+      email: customer?.email,
+      // Konnect echoes orderId back when we fetch the payment, which is how
+      // the webhook finds the Medusa payment session it belongs to.
+      orderId: typeof data?.session_id === "string" ? data.session_id : undefined,
+      webhook: this.options_.webhookUrl,
+      successUrl: this.options_.successUrl,
+      failUrl: this.options_.failUrl,
+    })
 
-      const result = await response.json() as {
-        payUrl: string
-        paymentRef: string
-      }
-
-      return {
-        id: result.paymentRef,
-        data: {
-          payment_ref: result.paymentRef,
-          pay_url: result.payUrl,
-        },
-      }
-    } catch (e: any) {
-      this.logger_.error(`Konnect initiatePayment error: ${e.message}`)
-      throw e
+    return {
+      id: payment.paymentRef,
+      data: {
+        payment_ref: payment.paymentRef,
+        pay_url: payment.payUrl,
+      },
     }
   }
 
-  // Called to check/confirm the payment has actually gone through
-  async authorizePayment(
-    input: AuthorizePaymentInput
-  ): Promise<AuthorizePaymentOutput> {
-    const paymentRef = input.data?.payment_ref as string
+  async authorizePayment(input: AuthorizePaymentInput): Promise<AuthorizePaymentOutput> {
+    const paymentRef = getPaymentRef(input.data)
     const status = await this.fetchPaymentStatus(paymentRef)
 
-    if (status === "completed") {
-      return { data: input.data, status: "authorized" }
+    if (status === "failed") {
+      throw new MedusaError(
+        MedusaError.Types.PAYMENT_AUTHORIZATION_ERROR,
+        `Konnect payment ${paymentRef} status: ${status}`
+      )
     }
-    if (status === "pending") {
-      return { data: input.data, status: "pending" }
-    }
-    throw new MedusaError(
-      MedusaError.Types.PAYMENT_AUTHORIZATION_ERROR,
-      `Konnect payment ${paymentRef} status: ${status}`
-    )
+
+    return { data: input.data, status: status === "completed" ? "authorized" : "pending" }
   }
 
-  async getPaymentStatus(
-    input: GetPaymentStatusInput
-  ): Promise<GetPaymentStatusOutput> {
-    const paymentRef = input.data?.payment_ref as string
-    const status = await this.fetchPaymentStatus(paymentRef)
-
-    switch (status) {
-      case "completed":
-        return { status: "captured" }
-      case "pending":
-        return { status: "pending" }
-      case "failed":
-        return { status: "error" }
-      default:
-        return { status: "pending" }
-    }
+  async getPaymentStatus(input: GetPaymentStatusInput): Promise<GetPaymentStatusOutput> {
+    const status = await this.fetchPaymentStatus(getPaymentRef(input.data))
+    return { status: SESSION_STATUS_BY_KONNECT_STATUS[status] }
   }
 
   async capturePayment(input: CapturePaymentInput): Promise<CapturePaymentOutput> {
-    // Konnect's "immediate" payment type auto-captures on completion —
-    // nothing additional to do here, just echo the data back.
+    // Konnect's "immediate" payment type auto-captures on completion
     return { data: input.data }
   }
 
@@ -176,11 +163,8 @@ class KonnectPaymentProviderService extends AbstractPaymentProvider<KonnectOptio
   }
 
   async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
-    // Konnect does not support automated refunds via API at time of writing —
-    // refunds must be processed manually from the Konnect merchant dashboard.
-    this.logger_.warn(
-      `Manual refund required in Konnect dashboard for payment_ref: ${input.data?.payment_ref}`
-    )
+    // Konnect has no refund API: refunds are done by hand in the merchant dashboard
+    this.logger_.warn(`Manual refund required in Konnect dashboard for payment_ref: ${input.data?.payment_ref}`)
     return { data: input.data }
   }
 
@@ -189,54 +173,40 @@ class KonnectPaymentProviderService extends AbstractPaymentProvider<KonnectOptio
   }
 
   async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> {
-    // Konnect doesn't support amount updates on an initiated payment —
+    // Konnect can't change the amount of an initiated payment —
     // the storefront should void and re-initiate if the cart total changes.
     return { data: input.data }
   }
 
   // Handles the webhook Konnect calls after a payment completes
-  async getWebhookActionAndData(
-    payload: ProviderWebhookPayload["payload"]
-  ): Promise<WebhookActionResult> {
-    const paymentRef = (payload.data as any)?.payment_ref
-      || new URLSearchParams(payload.rawData as any).get("payment_ref")
-
+  async getWebhookActionAndData(payload: ProviderWebhookPayload["payload"]): Promise<WebhookActionResult> {
+    const paymentRef = getWebhookPaymentRef(payload)
     if (!paymentRef) {
       return { action: "not_supported" }
     }
 
-    const status = await this.fetchPaymentStatus(paymentRef)
-
-    if (status === "completed") {
-      return {
-        action: "authorized",
-        data: {
-          session_id: paymentRef,
-          amount: 0, // Medusa fills this from the stored session; see docs note below
-        },
-      }
+    const payment = await this.client_.getPayment(paymentRef)
+    const sessionId = payment.orderId
+    if (!sessionId) {
+      this.logger_.warn(`Konnect webhook: payment ${paymentRef} has no orderId, cannot match a payment session`)
+      return { action: "not_supported" }
     }
 
-    if (status === "failed") {
-      return { action: "failed", data: { session_id: paymentRef, amount: 0 } }
-    }
+    const data = { session_id: sessionId, amount: fromMillimes(payment.amount ?? 0) }
 
-    return { action: "not_supported" }
+    switch (toKonnectStatus(payment.status)) {
+      case "completed":
+        return { action: "authorized", data }
+      case "failed":
+        return { action: "failed", data }
+      default:
+        return { action: "not_supported" }
+    }
   }
 
-  private async fetchPaymentStatus(
-    paymentRef: string
-  ): Promise<"completed" | "pending" | "failed"> {
-    const response = await fetch(
-      `${this.baseUrl}/payments/${paymentRef}`,
-      { headers: { "x-api-key": this.options_.apiKey } }
-    )
-    const json = await response.json() as { payment?: { status?: string } }
-    const status = json.payment?.status
-
-    if (status === "completed") return "completed"
-    if (status === "pending") return "pending"
-    return "failed"
+  private async fetchPaymentStatus(paymentRef: string): Promise<KonnectPaymentStatus> {
+    const payment = await this.client_.getPayment(paymentRef)
+    return toKonnectStatus(payment.status)
   }
 }
 
