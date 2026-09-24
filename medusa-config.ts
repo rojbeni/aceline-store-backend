@@ -71,6 +71,32 @@ module.exports = defineConfig({
         ],
       },
     },
+    {
+      resolve: "@medusajs/medusa/payment",
+      options: {
+        providers: [
+          // ...your other providers (e.g. system/manual)
+          {
+            resolve: "./src/modules/konnect",
+            id: "konnect",
+            options: {
+              apiKey: process.env.KONNECT_API_KEY, // "<walletId>:<apiKey>"
+              receiverWalletId: process.env.KONNECT_WALLET_ID,
+              baseUrl: process.env.KONNECT_BASE_URL, // omit for sandbox default
+              // Medusa auto-mounts a webhook listener at:
+              // {BACKEND_URL}/hooks/payment/{identifier}_{provider_id}
+              // Since static identifier = "konnect" and id below = "konnect",
+              // the full URL Konnect should call is:
+              // {BACKEND_URL}/hooks/payment/konnect_konnect
+              webhookUrl: `${process.env.BACKEND_URL}/hooks/payment/konnect_konnect`,
+              successUrl: `${process.env.STOREFRONT_URL}/order/confirmed`,
+              failUrl: `${process.env.STOREFRONT_URL}/checkout?payment=failed`,
+            },
+          },
+        ],
+      },
+    },
+
   ],
   featureFlags: { translation: true, },
   plugins: [
