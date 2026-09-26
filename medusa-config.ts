@@ -107,6 +107,12 @@ module.exports = defineConfig({
         pageAccessToken: process.env.FB_PAGE_ACCESS_TOKEN,
       },
     },
+    {
+      resolve: "./src/modules/seo-copywriter",
+      options: {
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      },
+    },
   ],
   featureFlags: { translation: true, },
   plugins: [
