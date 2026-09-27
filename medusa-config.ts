@@ -113,6 +113,9 @@ module.exports = defineConfig({
         apiKey: process.env.ANTHROPIC_API_KEY,
       },
     },
+    {
+      resolve: "./src/modules/metrics",
+    },
   ],
   featureFlags: { translation: true, },
   plugins: [

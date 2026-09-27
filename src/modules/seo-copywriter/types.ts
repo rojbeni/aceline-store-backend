@@ -22,7 +22,7 @@ export type ProductSeoSource = {
 // No length constraints in the schema: structured outputs don't enforce them,
 // so the limits live in the prompt and the admin reviews before applying.
 export const productSeoContentSchema = z.object({
-  title: z.string().describe("Nom du produit optimisé, 70 caractères maximum"),
+  title: z.string().describe("Marque et modèle du produit, 30 caractères maximum"),
   subtitle: z.string().describe("Accroche courte, 80 caractères maximum"),
   description: z.string().describe("Description produit en texte brut, paragraphes séparés par une ligne vide"),
   seo_title: z.string().describe("Balise title, 60 caractères maximum"),
